@@ -4,11 +4,13 @@ const messageInterface = new MessageInterface();
 
 window.addEventListener('DOMContentLoaded', async () => {
     const reloadButton = document.getElementById('reload');
+    const joinGameButton = document.getElementById('joingame');
+
     reloadButton?.addEventListener('click', () => {
         console.log('reloading');
         window.location.reload();
     });
-    
+
     const {token, profile} = await messageInterface.ready();
 
     messageInterface.sendMessage({
@@ -24,6 +26,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     const parentQueryParams = new URLSearchParams(window.parent.location.search);
     const channelId = parentQueryParams.get('channel_id');
+    const instanceId = parentQueryParams.get('frame_id');
 
     messageInterface.subscribe(
         'SPEAKING_START',
@@ -42,13 +45,38 @@ window.addEventListener('DOMContentLoaded', async () => {
     );
 
     const socket = new WebSocket(`wss://${process.env.CLIENT_ID}.discordsays.com/discord/ws`, ["Authorization", token]);
+
+    function sendData(data: any) {
+        socket.send(JSON.stringify(data));
+    }
+
+    joinGameButton?.addEventListener('click', () => {
+        console.log(`Joining game ${instanceId}`);
+        sendData({
+            type: "joingame",
+            instance_id: instanceId
+        })
+    });
+
     // Connection opened
     socket.addEventListener("open", (event) => { 
-        socket.send(JSON.stringify({test: "Hello"}));
+        console.log("Connected to server");
     });
 
     // Listen for messages
     socket.addEventListener("message", async (event) => {
-        console.log("Message from server ", JSON.parse(await event.data.text()));
+        console.log(event);
+        try {
+            var data = JSON.parse(event.data);
+            if(data.type === "ping") {
+                sendData({
+                    type: "pong"
+                });
+            }
+        }
+        catch
+        {
+            console.log(`Received invalid data from server: ${event.data}`);
+        }
     });
 });

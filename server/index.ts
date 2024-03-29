@@ -59,7 +59,7 @@ const server = http.createServer(app);
 //
 // Create a WebSocket server completely detached from the HTTP server.
 //
-const wss = new WebSocketServer({ clientTracking: false, noServer: true });
+const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', function (request: UserIncomingMessage, socket, head) {
   socket.on('error', onSocketError);
@@ -99,6 +99,25 @@ server.on('upgrade', function (request: UserIncomingMessage, socket, head) {
   }
 });
 
+function broadcast(data: any) {
+  if(wss.clients === undefined) {
+    console.log("Undefined clients?");
+    return;
+  }
+  wss.clients.forEach((client) => {
+    client.send(JSON.stringify(data));
+  });
+}
+
+// Keep alive pings
+setInterval(function () {
+  broadcast({
+    type: "ping"
+  });
+}, 5000);
+
+let rooms: any[] = [];
+
 wss.on('connection', function (ws, request: UserIncomingMessage) {
   const user = request.user;
   console.log(`${user.username} connected`);
@@ -106,12 +125,97 @@ wss.on('connection', function (ws, request: UserIncomingMessage) {
   ws.on('error', console.error);
 
   ws.on('message', function (message) {
-    const data = JSON.parse(message.toString());
-    console.log(`Received message ${message} from user ${user.username}`);
-    ws.send(message);
+    try {
+      const data = JSON.parse(message.toString());
+      if(data.type === "pong") {
+        // client responded to pong
+      }
+      else if(data.type === "joingame") {
+        if(data.instance_id === undefined) {
+          console.log(`${user.username} tried to join a game, but had invalid instance id`);
+          return;
+        }
+
+        console.log(`${user.username} (${user.currentRoomId}) tried to join ${data.instance_id}`);
+        if(user.currentRoomId !== undefined) {
+          // user is already inside a room.
+          if(user.currentRoomId === data.instance_id) {
+            // user tried to join the same room. ignore.
+            console.log(`${user.username} is already in the same room`);
+            return;
+          }
+          const currentRoom = rooms.find((room) => room.instance_id == user.currentRoomId);
+          if(currentRoom === undefined) {
+            // room does not exist? weird.
+            return;
+          }
+          currentRoom.users = currentRoom.users.filter((obj: any) => {
+              return obj !== user.id;
+          });
+          delete user.currentRoomId;
+          if(currentRoom.users.length == 0) {
+            // the room died. remove it.
+            rooms = rooms.filter((room) => room.instance_id !== currentRoom.instance_id);
+            console.log(`Remove room ${currentRoom.instance_id}`);
+          }
+        }
+
+        let room = rooms.find((room) => room.instance_id == data.instance_id);
+        if(room === undefined) {
+          // room does not exist, create one
+          const newroom: any = {
+            instance_id: data.instance_id,
+            users: [user.id]
+          }
+          user.currentRoomId = data.instance_id;
+          rooms.push(newroom);
+          console.log(`Created room ${newroom.instance_id}`);
+        }
+        else {
+          console.log("Room exists");
+        }
+      }
+      else if(data.type === "leaveroom") {
+        if(user.currentRoomId === undefined) {
+          console.log(`${user.username} (${user.currentRoomId}) tried to leave room, but is in none`);
+          return;
+        }
+        const currentRoom = rooms.find((room) => room.instance_id == user.currentRoomId);
+        if(currentRoom === undefined) {
+          // room does not exist? weird.
+          return;
+        }
+        currentRoom.users = currentRoom.users.filter((obj: any) => {
+            return obj !== user.id;
+        });
+        delete user.currentRoomId;
+        if(currentRoom.users.length == 0) {
+          // the room died. remove it.
+          rooms = rooms.filter((room) => room.instance_id !== currentRoom.instance_id);
+          console.log(`Remove room ${currentRoom.instance_id}`);
+        }
+      }
+    }
+    catch {
+      console.log(`${user.username} sent invalid data: ${message}`);
+    }
   });
 
   ws.on('close', function () {
+    if(user.currentRoomId !== undefined) {
+      const currentRoom = rooms.find((room) => room.instance_id == user.currentRoomId);
+      if(currentRoom !== undefined) {
+        currentRoom.users = currentRoom.users.filter((obj: any) => {
+            return obj !== user.id;
+        });
+        delete user.currentRoomId;
+        if(currentRoom.users.length == 0) {
+          // the room died. remove it.
+          rooms = rooms.filter((room) => room.instance_id !== currentRoom.instance_id);
+          console.log(`Remove room ${currentRoom.instance_id}`);
+        }
+      }
+    }
     console.log(`${user.username} disconnected`); 
   });
 });
